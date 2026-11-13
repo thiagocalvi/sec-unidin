@@ -5,6 +5,7 @@ import mimetypes
 import sqlite3
 import hashlib
 import uuid
+from werkzeug.utils import secure_filename
 from database import get_connection, init_db, encripta_password
 
 app = Flask(__name__)
@@ -12,6 +13,8 @@ app.secret_key = "unidin-local-secret-key"
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
+# Vulnerabilidade 5 - Extensões aceitas no upload
+EXTENSOES_PERMITIDAS = {"pdf", "png", "jpg", "jpeg", "txt", "docx"}
 init_db()
 
 def current_user():
@@ -50,8 +53,9 @@ def login():
     if email or password:
         password = encripta_password(password)
         conn = get_connection()
-        query = "SELECT * FROM users WHERE email = '" + email + "' AND password = '" + password + "'"
-        user = conn.execute(query).fetchone()
+        # Vulnerabilidade 1 - Consulta parametrizada para evitar concatenação SQL
+        query = "SELECT * FROM users WHERE email = ? AND password = ?"
+        user = conn.execute(query, (email, password)).fetchone()
         conn.close()
         if user:
             session.clear()
@@ -149,7 +153,12 @@ def add_message(discipline_id):
     original_filename = file.filename if file and file.filename else None
     stored_filename = None
     if file and original_filename:
-        stored_filename = uuid.uuid4().hex + "_" + original_filename
+        # Vulnerabilidade 5 - Higieniza o nome e valida a extensão
+        safe_name = secure_filename(original_filename)
+        ext = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else ""
+        if ext not in EXTENSOES_PERMITIDAS:
+            abort(400)
+        stored_filename = uuid.uuid4().hex + "_" + safe_name
         file.save(UPLOAD_DIR / stored_filename)
     if not body and not stored_filename:
         abort(400)
@@ -197,8 +206,15 @@ def download_file(filename):
     conn.close()
     if not allowed:
         abort(403)
-    mimetype = mimetypes.guess_type(message["original_filename"] or filename)[0] or "application/octet-stream"
-    return send_from_directory(UPLOAD_DIR, filename, as_attachment=False, mimetype=mimetype)
+    # Vulnerabilidade 5 - Sempre como download (attachment), tipo genérico e sem MIME sniffing
+    resp = send_from_directory(
+        UPLOAD_DIR, filename,
+        as_attachment=True,
+        mimetype="application/octet-stream",
+        download_name=message["original_filename"] or filename,
+    )
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    return resp
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=True)
