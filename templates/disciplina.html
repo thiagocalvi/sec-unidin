@@ -71,7 +71,8 @@
         <a class="danger-link" href="{{ url_for('delete_message', message_id=message['id']) }}">Excluir</a>
         {% endif %}
     </div>
-    <div class="message-body">{{ message['body']|safe }}</div>
+    {# Vulnerabilidade 3 - Sem |safe #}
+    <div class="message-body">{{ message['body'] }}</div>
     {% if message['stored_filename'] %}
         <a class="file-link" href="{{ url_for('download_file', filename=message['stored_filename']) }}" target="_blank" rel="noopener">Abrir: {{ message['original_filename'] }}</a>
         <a class="file-link" href="{{ url_for('download_file', filename=message['stored_filename']) }}">Baixar: {{ message['original_filename'] }}</a>
