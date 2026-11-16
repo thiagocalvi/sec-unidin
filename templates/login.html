@@ -3,6 +3,7 @@
 <section class="auth-card">
     <h1>UniDIN</h1>
     <p class="subtitle">Sistema de gerenciamento acadêmico</p>
+
     <!-- Vulnerabilidade 4 - BruteForce: rate limiting na rota login --> 
     <form method="post" action="{{ url_for('login') }}">
         <!-- Vulnerabilidade 7 - CSRF: Endpoints de Escrita --> 

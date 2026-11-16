@@ -1,12 +1,11 @@
 from flask import Flask, render_template, request, redirect, url_for, session, send_from_directory, abort, flash
 from pathlib import Path
-import base64
-import mimetypes
-import sqlite3
-import hashlib
+import os
 import uuid
 from werkzeug.utils import secure_filename
+from werkzeug.exceptions import RequestEntityTooLarge
 from database import get_connection, init_db, encripta_password
+from dotenv import load_dotenv
 
 # Vulnerabilidade 4 - BruteForce: rate limiting na rota login
 from flask_limiter import Limiter
@@ -20,10 +19,18 @@ app = Flask(__name__)
 # Vulnerabilidade 4 - BruteForce: rate limiting na rota login
 limiter = Limiter(get_remote_address, app=app, storage_uri="memory://")
 
+# Vulnerabilidade 8 - Chave secreta lida do ambiente, nunca fixa no código
+load_dotenv()
+app.secret_key = os.environ.get("SECRET_KEY")
+if not app.secret_key:
+    raise RuntimeError("Defina a variável de ambiente SECRET_KEY antes de iniciar a aplicação.")
+
 # Vulnerabilidade 7 - CSRF: Endpoints de Escrita
-app.secret_key = "unidin-local-secret-key"
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 csrf = CSRFProtect(app)
+
+# Vulnerabilidade 13 - Limite de 16 MB no corpo da requisição (uploads)
+app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
@@ -31,6 +38,12 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 # Vulnerabilidade 5 - Extensões aceitas no upload
 EXTENSOES_PERMITIDAS = {"pdf", "png", "jpg", "jpeg", "txt", "docx"}
 init_db()
+
+# Vulnerabilidade 13 - Mensagem quando o upload excede o limite
+@app.errorhandler(RequestEntityTooLarge)
+def arquivo_muito_grande(e):
+    flash("Arquivo muito grande. O tamanho máximo permitido é 16 MB.", "error")
+    return redirect(request.referrer or url_for("index"))
 
 def current_user():
     if "user_id" not in session:
@@ -67,6 +80,7 @@ def too_many_request(e):
     flash("Muitas tentativas de login. Aguarde um minuto e tente novamente.", "error")
     return render_template("login.html"), 429
 
+# Vulnerabilidade 9 - Credenciais enviadas no corpo (POST), não na URL
 @app.route("/login", methods=["GET", "POST"])        # Vulnerabilidade 4 - BruteForce: rate limiting na rota login
 @limiter.limit("5 per minute", methods=["POST"])     # Vulnerabilidade 4 - BruteForce: rate limiting na rota login
 def login():
@@ -75,6 +89,7 @@ def login():
     if request.method == "POST":
         email = request.form.get("email", "")
         password = encripta_password(request.form.get("password", ""))
+
         conn = get_connection()
         # Vulnerabilidade 1 - Consulta parametrizada para evitar concatenação SQL
         query = "SELECT * FROM users WHERE email = ? AND password = ?"
@@ -152,13 +167,23 @@ def save_grade(discipline_id):
     discipline = discipline_for_user(discipline_id, user)
     if discipline is None:
         abort(403)
+        
+    # Vulnerabilidade 7 e 11 - CSRF + validação das regras de negócio no servidor
+    try:
+        student_id = int(request.form.get("student_id", ""))
+        assessment = int(request.form.get("assessment", ""))
+        value = float(request.form.get("value", ""))
+    except ValueError:
+        abort(400)
+    if assessment not in (1, 2, 3, 4) or not (0.0 <= value <= 10.0):
+        abort(400)
 
-    # Vulnerabilidade 7 - CSRF: Endpoints de Escrita
-    student_id = request.form.get("student_id")
-    assessment = request.form.get("assessment")
-    value = request.form.get("value")
-    
     conn = get_connection()
+    # SELECT 1 porque não precisa de nenhuma coluna específica, só compara os ids
+    enrolled = conn.execute("SELECT 1 FROM enrollments WHERE discipline_id=? AND student_id=?", (discipline_id, student_id)).fetchone()
+    if not enrolled:
+        conn.close()
+        abort(400)
     existing = conn.execute("SELECT id FROM grades WHERE discipline_id=? AND student_id=? AND assessment=?", (discipline_id, student_id, assessment)).fetchone()
     if existing:
         conn.execute("UPDATE grades SET value=? WHERE id=?", (value, existing["id"]))
