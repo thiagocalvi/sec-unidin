@@ -1,21 +1,32 @@
 from flask import Flask, render_template, request, redirect, url_for, session, send_from_directory, abort, flash
 from pathlib import Path
-import base64
-import mimetypes
-import sqlite3
-import hashlib
+import os
 import uuid
 from werkzeug.utils import secure_filename
+from werkzeug.exceptions import RequestEntityTooLarge
 from database import get_connection, init_db, encripta_password
+from dotenv import load_dotenv
 
 app = Flask(__name__)
-app.secret_key = "unidin-local-secret-key"
+# Vulnerabilidade 8 - Chave secreta lida do ambiente, nunca fixa no código
+load_dotenv()
+app.secret_key = os.environ.get("SECRET_KEY")
+if not app.secret_key:
+    raise RuntimeError("Defina a variável de ambiente SECRET_KEY antes de iniciar a aplicação.")
+# Vulnerabilidade 13 - Limite de 16 MB no corpo da requisição (uploads)
+app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 # Vulnerabilidade 5 - Extensões aceitas no upload
 EXTENSOES_PERMITIDAS = {"pdf", "png", "jpg", "jpeg", "txt", "docx"}
 init_db()
+
+# Vulnerabilidade 13 - Mensagem quando o upload excede o limite
+@app.errorhandler(RequestEntityTooLarge)
+def arquivo_muito_grande(e):
+    flash("Arquivo muito grande. O tamanho máximo permitido é 16 MB.", "error")
+    return redirect(request.referrer or url_for("index"))
 
 def current_user():
     if "user_id" not in session:
@@ -46,11 +57,12 @@ def index():
         return redirect(url_for("professor"))
     return redirect(url_for("aluno"))
 
-@app.route("/login", methods=["GET"])
+# Vulnerabilidade 9 - Credenciais enviadas no corpo (POST), não na URL
+@app.route("/login", methods=["GET", "POST"])
 def login():
-    email = request.args.get("email", "")
-    password = request.args.get("password", "")
-    if email or password:
+    if request.method == "POST":
+        email = request.form.get("email", "")
+        password = request.form.get("password", "")
         password = encripta_password(password)
         conn = get_connection()
         # Vulnerabilidade 1 - Consulta parametrizada para evitar concatenação SQL
@@ -128,10 +140,21 @@ def save_grade(discipline_id):
     discipline = discipline_for_user(discipline_id, user)
     if discipline is None:
         abort(403)
-    student_id = request.args.get("student_id")
-    assessment = request.args.get("assessment")
-    value = request.args.get("value")
+    # Vulnerabilidade 11 - Validação das regras de negócio no servidor
+    try:
+        student_id = int(request.args.get("student_id", ""))
+        assessment = int(request.args.get("assessment", ""))
+        value = float(request.args.get("value", ""))
+    except ValueError:
+        abort(400)
+    if assessment not in (1, 2, 3, 4) or not (0.0 <= value <= 10.0):
+        abort(400)
     conn = get_connection()
+    # SELECT 1 porque não precisa de nenhuma coluna específica, só compara os ids
+    enrolled = conn.execute("SELECT 1 FROM enrollments WHERE discipline_id=? AND student_id=?", (discipline_id, student_id)).fetchone()
+    if not enrolled:
+        conn.close()
+        abort(400)
     existing = conn.execute("SELECT id FROM grades WHERE discipline_id=? AND student_id=? AND assessment=?", (discipline_id, student_id, assessment)).fetchone()
     if existing:
         conn.execute("UPDATE grades SET value=? WHERE id=?", (value, existing["id"]))

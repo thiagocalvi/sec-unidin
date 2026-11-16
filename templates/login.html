@@ -3,7 +3,7 @@
 <section class="auth-card">
     <h1>UniDIN</h1>
     <p class="subtitle">Sistema de gerenciamento acadêmico</p>
-    <form method="get" action="{{ url_for('login') }}">
+    <form method="post" action="{{ url_for('login') }}">
         <label for="email">E-mail institucional</label>
         <input id="email" name="email" type="text" placeholder="nome@universidade.br" required autofocus>
         <label for="password">Senha</label>

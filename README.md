@@ -11,6 +11,13 @@ Instale as dependências:
 pip install -r requirements.txt
 ```
 
+Crie o arquivo `.env` com a chave secreta (obrigatória, não versionado):
+
+```bash
+cp .env.example .env
+sed -i "s/^SECRET_KEY=.*/SECRET_KEY=$(python -c 'import secrets; print(secrets.token_hex(32))')/" .env
+```
+
 Execute:
 
 ```bash
