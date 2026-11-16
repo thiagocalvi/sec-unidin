@@ -1,2 +1,6 @@
 Flask==3.1.2
 Werkzeug==3.1.9
+# Vulnerabilidade 4 - BruteForce: rate limiting na rota login
+Flask-Limiter
+# Vulnerabilidade 7 - CSRF: Endpoints de Escrita
+Flask-WTF

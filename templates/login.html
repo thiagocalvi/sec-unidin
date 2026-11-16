@@ -3,7 +3,11 @@
 <section class="auth-card">
     <h1>UniDIN</h1>
     <p class="subtitle">Sistema de gerenciamento acadêmico</p>
-    <form method="get" action="{{ url_for('login') }}">
+    <!-- Vulnerabilidade 4 - BruteForce: rate limiting na rota login --> 
+    <form method="post" action="{{ url_for('login') }}">
+        <!-- Vulnerabilidade 7 - CSRF: Endpoints de Escrita --> 
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
         <label for="email">E-mail institucional</label>
         <input id="email" name="email" type="text" placeholder="nome@universidade.br" required autofocus>
         <label for="password">Senha</label>

@@ -8,8 +8,23 @@ import uuid
 from werkzeug.utils import secure_filename
 from database import get_connection, init_db, encripta_password
 
+# Vulnerabilidade 4 - BruteForce: rate limiting na rota login
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+
+# Vulnerabilidade 7 - CSRF: Endpoints de Escrita
+from flask_wtf.csrf import CSRFProtect
+
 app = Flask(__name__)
+
+# Vulnerabilidade 4 - BruteForce: rate limiting na rota login
+limiter = Limiter(get_remote_address, app=app, storage_uri="memory://")
+
+# Vulnerabilidade 7 - CSRF: Endpoints de Escrita
 app.secret_key = "unidin-local-secret-key"
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+csrf = CSRFProtect(app)
+
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -46,12 +61,20 @@ def index():
         return redirect(url_for("professor"))
     return redirect(url_for("aluno"))
 
-@app.route("/login", methods=["GET"])
+# Vulnerabilidade 4 - BruteForce: rate limiting na rota login
+@app.errorhandler(429)
+def too_many_request(e):
+    flash("Muitas tentativas de login. Aguarde um minuto e tente novamente.", "error")
+    return render_template("login.html"), 429
+
+@app.route("/login", methods=["GET", "POST"])        # Vulnerabilidade 4 - BruteForce: rate limiting na rota login
+@limiter.limit("5 per minute", methods=["POST"])     # Vulnerabilidade 4 - BruteForce: rate limiting na rota login
 def login():
-    email = request.args.get("email", "")
-    password = request.args.get("password", "")
-    if email or password:
-        password = encripta_password(password)
+
+    # Vulnerabilidade 4 - BruteForce: rate limiting na rota login
+    if request.method == "POST":
+        email = request.form.get("email", "")
+        password = encripta_password(request.form.get("password", ""))
         conn = get_connection()
         # Vulnerabilidade 1 - Consulta parametrizada para evitar concatenação SQL
         query = "SELECT * FROM users WHERE email = ? AND password = ?"
@@ -118,7 +141,8 @@ def disciplina(discipline_id):
     conn.close()
     return render_template("disciplina.html", user=user, discipline=discipline, messages=messages, students=students, grades=grades)
 
-@app.route("/disciplina/<int:discipline_id>/nota", methods=["GET"])
+# Vulnerabilidade 7 - CSRF: Endpoints de Escrita
+@app.route("/disciplina/<int:discipline_id>/nota", methods=["POST"])
 def save_grade(discipline_id):
     user = require_login()
     if user is None:
@@ -128,9 +152,12 @@ def save_grade(discipline_id):
     discipline = discipline_for_user(discipline_id, user)
     if discipline is None:
         abort(403)
-    student_id = request.args.get("student_id")
-    assessment = request.args.get("assessment")
-    value = request.args.get("value")
+
+    # Vulnerabilidade 7 - CSRF: Endpoints de Escrita
+    student_id = request.form.get("student_id")
+    assessment = request.form.get("assessment")
+    value = request.form.get("value")
+    
     conn = get_connection()
     existing = conn.execute("SELECT id FROM grades WHERE discipline_id=? AND student_id=? AND assessment=?", (discipline_id, student_id, assessment)).fetchone()
     if existing:

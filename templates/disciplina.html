@@ -35,7 +35,10 @@
 </section>
 <section class="panel">
     <div class="panel-title"><div><h2>Gerenciar notas</h2><p>Inclua uma nova nota ou altere uma avaliação existente.</p></div></div>
-    <form class="form-grid" method="get" action="{{ url_for('save_grade', discipline_id=discipline['id']) }}">
+    <!-- Vulnerabilidade 7 - CSRF: Endpoints de Escrita -->
+    <form class="form-grid" method="post" action="{{ url_for('save_grade', discipline_id=discipline['id']) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
         <div><label for="student_id">Aluno</label><select id="student_id" name="student_id" required>{% for student in students %}<option value="{{ student['id'] }}">{{ student['name'] }}</option>{% endfor %}</select></div>
         <div><label for="assessment">Avaliação</label><select id="assessment" name="assessment" required><option value="1">Nota 1</option><option value="2">Nota 2</option><option value="3">Nota 3</option><option value="4">Nota 4</option></select></div>
         <div><label for="value">Valor</label><input id="value" name="value" type="number" min="0" max="10" step="0.1" required></div>
@@ -54,6 +57,9 @@
 <section class="panel">
     <div class="panel-title"><div><h2>Mural da disciplina</h2><p>Mensagens e arquivos compartilhados entre os participantes.</p></div></div>
     <form id="message-form" method="post" action="{{ url_for('add_message', discipline_id=discipline['id']) }}" enctype="multipart/form-data">
+        <!-- Vulnerabilidade 7 - CSRF: Endpoints de Escrita -->
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
         <label for="body">Mensagem</label>
         <textarea id="body" name="body" rows="5" placeholder="Escreva uma mensagem para a disciplina..."></textarea>
         <label for="file">Arquivo</label>
