@@ -1,6 +1,6 @@
 import sqlite3
-import hashlib
 from pathlib import Path
+from werkzeug.security import generate_password_hash
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "unidin.db"
@@ -11,7 +11,8 @@ def get_connection():
     return conn
 
 def encripta_password(password):
-    return hashlib.sha512(password.encode("utf-8")).hexdigest()
+    # Vulnerabilidade 10 - Hash com salt aleatório e fator de trabalho (werkzeug)
+    return generate_password_hash(password)
 
 def init_db():
     conn = get_connection()
