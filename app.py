@@ -6,6 +6,11 @@ from werkzeug.utils import secure_filename
 from werkzeug.exceptions import RequestEntityTooLarge
 from database import get_connection, init_db, encripta_password
 from dotenv import load_dotenv
+from database import get_connection
+
+import hashlib
+import hmac
+from werkzeug.security import check_password_hash
 
 # Vulnerabilidade 4 - BruteForce: rate limiting na rota login
 from flask_limiter import Limiter
@@ -13,6 +18,9 @@ from flask_limiter.util import get_remote_address
 
 # Vulnerabilidade 7 - CSRF: Endpoints de Escrita
 from flask_wtf.csrf import CSRFProtect
+
+# Vulnerabilidade 10 - Hash com salt aleatório e fator de trabalho (werkzeug)
+from werkzeug.security import check_password_hash
 
 app = Flask(__name__)
 
@@ -38,6 +46,8 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 # Vulnerabilidade 5 - Extensões aceitas no upload
 EXTENSOES_PERMITIDAS = {"pdf", "png", "jpg", "jpeg", "txt", "docx"}
 init_db()
+
+conn = get_connection()
 
 # Vulnerabilidade 13 - Mensagem quando o upload excede o limite
 @app.errorhandler(RequestEntityTooLarge)
@@ -80,6 +90,13 @@ def too_many_request(e):
     flash("Muitas tentativas de login. Aguarde um minuto e tente novamente.", "error")
     return render_template("login.html"), 429
 
+# Vulnerabilidade 10 - Aceita hash legado (SHA-512) e indica se precisa migrar
+def verifica_senha(armazenado, senha):
+    if armazenado.startswith(("scrypt:", "pbkdf2:")):
+        return check_password_hash(armazenado, senha), False
+    legado = hashlib.sha512(senha.encode("utf-8")).hexdigest()
+    return hmac.compare_digest(armazenado, legado), True
+
 # Vulnerabilidade 9 - Credenciais enviadas no corpo (POST), não na URL
 @app.route("/login", methods=["GET", "POST"])        # Vulnerabilidade 4 - BruteForce: rate limiting na rota login
 @limiter.limit("5 per minute", methods=["POST"])     # Vulnerabilidade 4 - BruteForce: rate limiting na rota login
@@ -88,17 +105,24 @@ def login():
     # Vulnerabilidade 4 - BruteForce: rate limiting na rota login
     if request.method == "POST":
         email = request.form.get("email", "")
-        password = encripta_password(request.form.get("password", ""))
+        password = request.form.get("password", "")
 
         conn = get_connection()
         # Vulnerabilidade 1 - Consulta parametrizada para evitar concatenação SQL
-        query = "SELECT * FROM users WHERE email = ? AND password = ?"
-        user = conn.execute(query, (email, password)).fetchone()
-        conn.close()
+        query = "SELECT * FROM users WHERE email = ?"
+        user = conn.execute(query, (email,)).fetchone()
         if user:
-            session.clear()
-            session["user_id"] = user["id"]
-            return redirect(url_for("index"))
+            ok, legado = verifica_senha(user["password"], password)
+            if ok:
+                # Vulnerabilidade 10 - Regrava no formato novo (salt + fator de trabalho)
+                if legado:
+                    conn.execute("UPDATE users SET password=? WHERE id=?", (encripta_password(password), user["id"]))
+                    conn.commit()
+                conn.close()
+                session.clear()
+                session["user_id"] = user["id"]
+                return redirect(url_for("index"))
+        conn.close()
         flash("Credenciais inválidas.", "error")
     return render_template("login.html")
 
@@ -167,7 +191,7 @@ def save_grade(discipline_id):
     discipline = discipline_for_user(discipline_id, user)
     if discipline is None:
         abort(403)
-        
+
     # Vulnerabilidade 7 e 11 - CSRF + validação das regras de negócio no servidor
     try:
         student_id = int(request.form.get("student_id", ""))
@@ -221,7 +245,8 @@ def add_message(discipline_id):
     conn.close()
     return redirect(url_for("disciplina", discipline_id=discipline_id))
 
-@app.route("/mensagem/<int:message_id>/excluir", methods=["GET"])
+# Vulnerabilidade 12 - Exclusão apenas via POST (com validação de token CSRF)
+@app.route("/mensagem/<int:message_id>/excluir", methods=["POST"])
 def delete_message(message_id):
     user = require_login()
     if user is None:
